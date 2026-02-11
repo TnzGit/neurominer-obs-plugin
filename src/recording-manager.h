@@ -33,9 +33,9 @@ struct video_data;
 // One frame's worth of recorded action data
 struct FrameAction {
 	uint64_t frame;
-	uint64_t timestamp_ms;    // wall clock (ms) for human reference
-	double frame_pts_ms;      // deterministic PTS = frame * 1000.0 / fps
-	uint64_t capture_ns;      // OBS compositor timestamp (ns) from video_data->timestamp
+	uint64_t timestamp_ms; // wall clock (ms) for human reference
+	double frame_pts_ms;   // deterministic PTS = frame * 1000.0 / fps
+	uint64_t capture_ns;   // OBS compositor timestamp (ns) from video_data->timestamp
 	InputState state;
 };
 

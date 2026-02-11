@@ -46,8 +46,7 @@ bool InputCapturerMacOS::hasAccessibilityPermission()
 	return AXIsProcessTrusted();
 }
 
-void InputCapturerMacOS::setSessionStart(std::chrono::steady_clock::time_point t0,
-					 uint64_t wallClockMs)
+void InputCapturerMacOS::setSessionStart(std::chrono::steady_clock::time_point t0, uint64_t wallClockMs)
 {
 	std::lock_guard<std::mutex> lock(mutex_);
 	sessionStart_ = t0;
@@ -77,20 +76,15 @@ bool InputCapturerMacOS::start()
 	}
 
 	// Event mask: keyboard + mouse + scroll
-	CGEventMask eventMask =
-		CGEventMaskBit(kCGEventKeyDown) | CGEventMaskBit(kCGEventKeyUp) |
-		CGEventMaskBit(kCGEventFlagsChanged) |
-		CGEventMaskBit(kCGEventMouseMoved) |
-		CGEventMaskBit(kCGEventLeftMouseDown) | CGEventMaskBit(kCGEventLeftMouseUp) |
-		CGEventMaskBit(kCGEventRightMouseDown) | CGEventMaskBit(kCGEventRightMouseUp) |
-		CGEventMaskBit(kCGEventOtherMouseDown) | CGEventMaskBit(kCGEventOtherMouseUp) |
-		CGEventMaskBit(kCGEventLeftMouseDragged) |
-		CGEventMaskBit(kCGEventRightMouseDragged) |
-		CGEventMaskBit(kCGEventOtherMouseDragged) |
-		CGEventMaskBit(kCGEventScrollWheel);
+	CGEventMask eventMask = CGEventMaskBit(kCGEventKeyDown) | CGEventMaskBit(kCGEventKeyUp) |
+				CGEventMaskBit(kCGEventFlagsChanged) | CGEventMaskBit(kCGEventMouseMoved) |
+				CGEventMaskBit(kCGEventLeftMouseDown) | CGEventMaskBit(kCGEventLeftMouseUp) |
+				CGEventMaskBit(kCGEventRightMouseDown) | CGEventMaskBit(kCGEventRightMouseUp) |
+				CGEventMaskBit(kCGEventOtherMouseDown) | CGEventMaskBit(kCGEventOtherMouseUp) |
+				CGEventMaskBit(kCGEventLeftMouseDragged) | CGEventMaskBit(kCGEventRightMouseDragged) |
+				CGEventMaskBit(kCGEventOtherMouseDragged) | CGEventMaskBit(kCGEventScrollWheel);
 
-	eventTap_ = CGEventTapCreate(kCGHIDEventTap, kCGHeadInsertEventTap,
-				     kCGEventTapOptionListenOnly, eventMask,
+	eventTap_ = CGEventTapCreate(kCGHIDEventTap, kCGHeadInsertEventTap, kCGEventTapOptionListenOnly, eventMask,
 				     InputCapturerMacOS::eventCallback, this);
 
 	if (!eventTap_) {
@@ -211,13 +205,11 @@ void InputCapturerMacOS::stampEvent(InputEvent &ev) const
 
 	// Wall clock
 	auto wallNow = system_clock::now();
-	ev.timestamp_ms =
-		(uint64_t)duration_cast<milliseconds>(wallNow.time_since_epoch()).count();
+	ev.timestamp_ms = (uint64_t)duration_cast<milliseconds>(wallNow.time_since_epoch()).count();
 
 	// Session-relative offset
 	if (sessionStartSet_) {
-		ev.session_offset_us =
-			(int64_t)duration_cast<microseconds>(now - sessionStart_).count();
+		ev.session_offset_us = (int64_t)duration_cast<microseconds>(now - sessionStart_).count();
 	} else {
 		ev.session_offset_us = 0;
 	}
@@ -234,8 +226,8 @@ void InputCapturerMacOS::pushEvent(InputEvent &&ev)
 // ---------------------------------------------------------------------------
 // Static CGEvent callback
 // ---------------------------------------------------------------------------
-CGEventRef InputCapturerMacOS::eventCallback(CGEventTapProxy /*proxy*/, CGEventType type,
-					     CGEventRef event, void *userInfo)
+CGEventRef InputCapturerMacOS::eventCallback(CGEventTapProxy /*proxy*/, CGEventType type, CGEventRef event,
+					     void *userInfo)
 {
 	auto *self = static_cast<InputCapturerMacOS *>(userInfo);
 

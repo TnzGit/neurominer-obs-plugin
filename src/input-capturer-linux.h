@@ -29,8 +29,7 @@ public:
 	bool isRunning() const override;
 	InputState snapshotAndResetDeltas() override;
 	InputState peekState() const override;
-	void setSessionStart(std::chrono::steady_clock::time_point t0,
-			     uint64_t wallClockMs) override;
+	void setSessionStart(std::chrono::steady_clock::time_point t0, uint64_t wallClockMs) override;
 	std::vector<InputEvent> drainEvents() override;
 
 private:

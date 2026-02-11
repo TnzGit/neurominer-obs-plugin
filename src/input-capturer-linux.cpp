@@ -52,10 +52,7 @@ InputState InputCapturerLinux::peekState() const
 	return InputState{};
 }
 
-void InputCapturerLinux::setSessionStart(std::chrono::steady_clock::time_point /*t0*/,
-					 uint64_t /*wallClockMs*/)
-{
-}
+void InputCapturerLinux::setSessionStart(std::chrono::steady_clock::time_point /*t0*/, uint64_t /*wallClockMs*/) {}
 
 std::vector<InputEvent> InputCapturerLinux::drainEvents()
 {

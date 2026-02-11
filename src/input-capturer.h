@@ -44,8 +44,7 @@ public:
 
 	// Set the session start timepoint for computing session_offset_us on raw events.
 	// Must be called before start().
-	virtual void setSessionStart(std::chrono::steady_clock::time_point t0,
-				     uint64_t wallClockMs) = 0;
+	virtual void setSessionStart(std::chrono::steady_clock::time_point t0, uint64_t wallClockMs) = 0;
 
 	// Thread-safe: drain all raw InputEvents accumulated since the last call.
 	// Returns the events and clears the internal queue.

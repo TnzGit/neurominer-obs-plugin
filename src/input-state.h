@@ -23,10 +23,10 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <vector>
 
 struct MouseState {
-	int dx = 0;  // relative X movement since last frame
-	int dy = 0;  // relative Y movement since last frame
-	int x = 0;   // absolute X position
-	int y = 0;   // absolute Y position
+	int dx = 0;        // relative X movement since last frame
+	int dy = 0;        // relative Y movement since last frame
+	int x = 0;         // absolute X position
+	int y = 0;         // absolute Y position
 	int scroll_dy = 0; // scroll wheel delta
 
 	std::vector<std::string> buttons; // currently pressed mouse buttons
@@ -44,7 +44,7 @@ struct InputEvent {
 	//   "mouse_move", "mouse_button_down", "mouse_button_up", "scroll"
 	std::string type;
 
-	uint64_t timestamp_ms = 0;    // Unix wall clock (ms) — absolute reference
+	uint64_t timestamp_ms = 0;     // Unix wall clock (ms) — absolute reference
 	int64_t session_offset_us = 0; // microseconds since session start (steady_clock)
 
 	// Keyboard fields

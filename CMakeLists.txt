@@ -46,36 +46,29 @@ endif()
 # --- Common sources ---
 target_sources(
   ${CMAKE_PROJECT_NAME}
-  PRIVATE src/plugin-main.cpp
-          src/recording-manager.h
-          src/recording-manager.cpp
-          src/input-state.h
-          src/input-capturer.h
-          src/dock-widget.h
-          src/dock-widget.cpp
-          src/key-names.h
+  PRIVATE
+    src/plugin-main.cpp
+    src/recording-manager.h
+    src/recording-manager.cpp
+    src/input-state.h
+    src/input-capturer.h
+    src/dock-widget.h
+    src/dock-widget.cpp
+    src/key-names.h
 )
 
 # --- Platform-specific input capturer ---
 if(APPLE)
-  target_sources(
-    ${CMAKE_PROJECT_NAME}
-    PRIVATE src/input-capturer-macos.h src/input-capturer-macos.cpp
-  )
+  target_sources(${CMAKE_PROJECT_NAME} PRIVATE src/input-capturer-macos.h src/input-capturer-macos.cpp)
   target_link_libraries(
     ${CMAKE_PROJECT_NAME}
     PRIVATE "-framework CoreGraphics" "-framework CoreFoundation" "-framework ApplicationServices"
   )
 elseif(WIN32)
-  target_sources(
-    ${CMAKE_PROJECT_NAME}
-    PRIVATE src/input-capturer-win.h src/input-capturer-win.cpp
-  )
+  target_sources(${CMAKE_PROJECT_NAME} PRIVATE src/input-capturer-win.h src/input-capturer-win.cpp)
+  target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE user32)
 elseif(UNIX)
-  target_sources(
-    ${CMAKE_PROJECT_NAME}
-    PRIVATE src/input-capturer-linux.h src/input-capturer-linux.cpp
-  )
+  message(STATUS "Linux build temporarily disabled for this plugin.")
 endif()
 
 set_target_properties_plugin(${CMAKE_PROJECT_NAME} PROPERTIES OUTPUT_NAME ${_name})

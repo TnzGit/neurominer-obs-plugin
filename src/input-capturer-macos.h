@@ -40,8 +40,7 @@ public:
 	InputState snapshotAndResetDeltas() override;
 	InputState peekState() const override;
 
-	void setSessionStart(std::chrono::steady_clock::time_point t0,
-			     uint64_t wallClockMs) override;
+	void setSessionStart(std::chrono::steady_clock::time_point t0, uint64_t wallClockMs) override;
 	std::vector<InputEvent> drainEvents() override;
 
 	// Check if accessibility permission is granted
@@ -49,8 +48,7 @@ public:
 
 private:
 	// CGEvent callback (static, delegates to instance)
-	static CGEventRef eventCallback(CGEventTapProxy proxy, CGEventType type,
-					CGEventRef event, void *userInfo);
+	static CGEventRef eventCallback(CGEventTapProxy proxy, CGEventType type, CGEventRef event, void *userInfo);
 
 	// Instance-level event handler
 	void handleEvent(CGEventType type, CGEventRef event);
@@ -89,7 +87,7 @@ private:
 	std::set<std::string> pressedButtons_;
 	int mouseX_ = 0;
 	int mouseY_ = 0;
-	int accDx_ = 0; // accumulated delta X since last snapshot
-	int accDy_ = 0; // accumulated delta Y since last snapshot
+	int accDx_ = 0;       // accumulated delta X since last snapshot
+	int accDy_ = 0;       // accumulated delta Y since last snapshot
 	int accScrollDy_ = 0; // accumulated scroll delta since last snapshot
 };

@@ -158,3 +158,187 @@ inline std::string macKeyCodeToName(uint16_t keyCode)
 }
 
 #endif // __APPLE__
+
+// ===========================================================================
+// Windows: VK virtual-key code -> human-readable key name mapping
+// ===========================================================================
+#ifdef _WIN32
+
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+
+#include <cstdint>
+#include <string>
+#include <unordered_map>
+
+// Primary VK code -> name mapping.
+// Key names are kept consistent with the macOS mapping where possible.
+static const std::unordered_map<DWORD, std::string> kWinKeyNames = {
+	// Letters (VK_A .. VK_Z)
+	{0x41, "A"},
+	{0x42, "B"},
+	{0x43, "C"},
+	{0x44, "D"},
+	{0x45, "E"},
+	{0x46, "F"},
+	{0x47, "G"},
+	{0x48, "H"},
+	{0x49, "I"},
+	{0x4A, "J"},
+	{0x4B, "K"},
+	{0x4C, "L"},
+	{0x4D, "M"},
+	{0x4E, "N"},
+	{0x4F, "O"},
+	{0x50, "P"},
+	{0x51, "Q"},
+	{0x52, "R"},
+	{0x53, "S"},
+	{0x54, "T"},
+	{0x55, "U"},
+	{0x56, "V"},
+	{0x57, "W"},
+	{0x58, "X"},
+	{0x59, "Y"},
+	{0x5A, "Z"},
+
+	// Digits (top row)
+	{0x30, "0"},
+	{0x31, "1"},
+	{0x32, "2"},
+	{0x33, "3"},
+	{0x34, "4"},
+	{0x35, "5"},
+	{0x36, "6"},
+	{0x37, "7"},
+	{0x38, "8"},
+	{0x39, "9"},
+
+	// Function keys
+	{VK_F1, "F1"},
+	{VK_F2, "F2"},
+	{VK_F3, "F3"},
+	{VK_F4, "F4"},
+	{VK_F5, "F5"},
+	{VK_F6, "F6"},
+	{VK_F7, "F7"},
+	{VK_F8, "F8"},
+	{VK_F9, "F9"},
+	{VK_F10, "F10"},
+	{VK_F11, "F11"},
+	{VK_F12, "F12"},
+	{VK_F13, "F13"},
+	{VK_F14, "F14"},
+	{VK_F15, "F15"},
+	{VK_F16, "F16"},
+	{VK_F17, "F17"},
+	{VK_F18, "F18"},
+	{VK_F19, "F19"},
+	{VK_F20, "F20"},
+	{VK_F21, "F21"},
+	{VK_F22, "F22"},
+	{VK_F23, "F23"},
+	{VK_F24, "F24"},
+
+	// Special keys
+	{VK_RETURN, "Return"},
+	{VK_TAB, "Tab"},
+	{VK_SPACE, "Space"},
+	{VK_BACK, "Delete"},          // Backspace — matches macOS "Delete"
+	{VK_DELETE, "ForwardDelete"}, // Del key — matches macOS "ForwardDelete"
+	{VK_ESCAPE, "Escape"},
+	{VK_CAPITAL, "CapsLock"},
+
+	// Arrow keys
+	{VK_LEFT, "LeftArrow"},
+	{VK_RIGHT, "RightArrow"},
+	{VK_UP, "UpArrow"},
+	{VK_DOWN, "DownArrow"},
+
+	// Navigation
+	{VK_HOME, "Home"},
+	{VK_END, "End"},
+	{VK_PRIOR, "PageUp"},
+	{VK_NEXT, "PageDown"},
+	{VK_INSERT, "Insert"},
+	{VK_HELP, "Help"},
+
+	// Modifier keys (generic VK codes — left/right disambiguation handled separately)
+	{VK_LSHIFT, "LeftShift"},
+	{VK_RSHIFT, "RightShift"},
+	{VK_LCONTROL, "LeftControl"},
+	{VK_RCONTROL, "RightControl"},
+	{VK_LMENU, "LeftAlt"}, // Alt — Windows equivalent of macOS Option
+	{VK_RMENU, "RightAlt"},
+	{VK_LWIN, "LeftCommand"}, // Win key — mapped to "Command" for consistency
+	{VK_RWIN, "RightCommand"},
+
+	// Numpad
+	{VK_NUMPAD0, "Keypad0"},
+	{VK_NUMPAD1, "Keypad1"},
+	{VK_NUMPAD2, "Keypad2"},
+	{VK_NUMPAD3, "Keypad3"},
+	{VK_NUMPAD4, "Keypad4"},
+	{VK_NUMPAD5, "Keypad5"},
+	{VK_NUMPAD6, "Keypad6"},
+	{VK_NUMPAD7, "Keypad7"},
+	{VK_NUMPAD8, "Keypad8"},
+	{VK_NUMPAD9, "Keypad9"},
+	{VK_MULTIPLY, "KeypadMultiply"},
+	{VK_ADD, "KeypadPlus"},
+	{VK_SUBTRACT, "KeypadMinus"},
+	{VK_DECIMAL, "KeypadDecimal"},
+	{VK_DIVIDE, "KeypadDivide"},
+	{VK_NUMLOCK, "NumLock"},
+
+	// OEM keys (US layout — symbols vary by keyboard layout)
+	{VK_OEM_1, "Semicolon"},    // ;:
+	{VK_OEM_2, "Slash"},        // /?
+	{VK_OEM_3, "Grave"},        // `~
+	{VK_OEM_4, "LeftBracket"},  // [{
+	{VK_OEM_5, "Backslash"},    // \|
+	{VK_OEM_6, "RightBracket"}, // ]}
+	{VK_OEM_7, "Quote"},        // '"
+	{VK_OEM_PLUS, "Equal"},     // =+
+	{VK_OEM_COMMA, "Comma"},    // ,<
+	{VK_OEM_MINUS, "Minus"},    // -_
+	{VK_OEM_PERIOD, "Period"},  // .>
+
+	// Misc
+	{VK_SNAPSHOT, "PrintScreen"},
+	{VK_SCROLL, "ScrollLock"},
+	{VK_PAUSE, "Pause"},
+	{VK_APPS, "Menu"}, // Context menu key
+};
+
+// Resolve a Windows VK code to a human-readable key name.
+// Uses the extended flag from KBDLLHOOKSTRUCT to disambiguate left/right
+// variants of Shift, Control, and Alt (Menu) when the generic VK is used.
+inline std::string winVkCodeToName(DWORD vkCode, DWORD scanCode, bool extended)
+{
+	// Disambiguate generic modifier VK codes
+	switch (vkCode) {
+	case VK_SHIFT:
+		// MapVirtualKey can distinguish left/right shift by scan code
+		vkCode = MapVirtualKeyW(scanCode, MAPVK_VSC_TO_VK_EX);
+		if (vkCode == 0)
+			vkCode = VK_LSHIFT;
+		break;
+	case VK_CONTROL:
+		vkCode = extended ? (DWORD)VK_RCONTROL : (DWORD)VK_LCONTROL;
+		break;
+	case VK_MENU: // Alt
+		vkCode = extended ? (DWORD)VK_RMENU : (DWORD)VK_LMENU;
+		break;
+	}
+
+	auto it = kWinKeyNames.find(vkCode);
+	if (it != kWinKeyNames.end()) {
+		return it->second;
+	}
+	return "VK" + std::to_string(vkCode);
+}
+
+#endif // _WIN32

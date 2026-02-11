@@ -17,10 +17,10 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 */
 
 #include "recording-manager.h"
-#include <plugin-support.h>
 
 #include <obs.h>
 #include <obs-frontend-api.h>
+#include <plugin-support.h>
 
 #include <chrono>
 #include <cstdio>
@@ -223,8 +223,7 @@ void RecordingManager::stopSession()
 		auto remaining = capturer_->drainEvents();
 		{
 			std::lock_guard<std::mutex> lock(mutex_);
-			events_.insert(events_.end(),
-				       std::make_move_iterator(remaining.begin()),
+			events_.insert(events_.end(), std::make_move_iterator(remaining.begin()),
 				       std::make_move_iterator(remaining.end()));
 		}
 		capturer_->stop();
@@ -232,9 +231,8 @@ void RecordingManager::stopSession()
 
 	uint64_t durationMs = endMs - startMs;
 
-	obs_log(LOG_INFO, "Recording session stopped: %s (%llu frames, %llu ms, %zu events)",
-		uuid.c_str(), (unsigned long long)totalFrames, (unsigned long long)durationMs,
-		events_.size());
+	obs_log(LOG_INFO, "Recording session stopped: %s (%llu frames, %llu ms, %zu events)", uuid.c_str(),
+		(unsigned long long)totalFrames, (unsigned long long)durationMs, events_.size());
 
 	// Get the recording file path from OBS
 	char *lastRecording = obs_frontend_get_last_recording();
@@ -255,12 +253,19 @@ void RecordingManager::stopSession()
 	std::string sessionDir = baseDir + "/" + uuid;
 
 	if (mkdir_p(sessionDir.c_str()) != 0) {
-		obs_log(LOG_WARNING, "mkdir returned non-zero for: %s (may already exist)",
-			sessionDir.c_str());
+		obs_log(LOG_WARNING, "mkdir returned non-zero for: %s (may already exist)", sessionDir.c_str());
 	}
 
-	// Move recording file to UUID/recording.mp4
-	std::string destRecording = sessionDir + "/recording.mp4";
+	// Move recording file to UUID/recording.<ext>
+	std::string ext = ".mp4";
+	{
+		size_t sep = recordingPath.find_last_of("/\\");
+		size_t dot = recordingPath.find_last_of('.');
+		if (dot != std::string::npos && (sep == std::string::npos || dot > sep)) {
+			ext = recordingPath.substr(dot);
+		}
+	}
+	std::string destRecording = sessionDir + "/recording" + ext;
 	if (std::rename(recordingPath.c_str(), destRecording.c_str()) != 0) {
 		obs_log(LOG_ERROR, "Failed to move recording from '%s' to '%s'", recordingPath.c_str(),
 			destRecording.c_str());
@@ -302,8 +307,7 @@ void RecordingManager::onRawVideo(void *param, struct video_data *frame)
 
 	// Append raw events
 	if (!newEvents.empty()) {
-		self->events_.insert(self->events_.end(),
-				     std::make_move_iterator(newEvents.begin()),
+		self->events_.insert(self->events_.end(), std::make_move_iterator(newEvents.begin()),
 				     std::make_move_iterator(newEvents.end()));
 	}
 
@@ -336,9 +340,8 @@ std::string RecordingManager::generateUUID()
 	b = (b & 0x3FFFFFFFFFFFFFFFULL) | 0x8000000000000000ULL;
 
 	char buf[40];
-	std::snprintf(buf, sizeof(buf), "%08x-%04x-%04x-%04x-%012llx",
-		      (uint32_t)(a >> 32), (uint16_t)((a >> 16) & 0xFFFF),
-		      (uint16_t)(a & 0xFFFF), (uint16_t)(b >> 48),
+	std::snprintf(buf, sizeof(buf), "%08x-%04x-%04x-%04x-%012llx", (uint32_t)(a >> 32),
+		      (uint16_t)((a >> 16) & 0xFFFF), (uint16_t)(a & 0xFFFF), (uint16_t)(b >> 48),
 		      (unsigned long long)(b & 0x0000FFFFFFFFFFFFULL));
 	return std::string(buf);
 }
@@ -346,8 +349,7 @@ std::string RecordingManager::generateUUID()
 // ---------------------------------------------------------------------------
 // Write metadata.json
 // ---------------------------------------------------------------------------
-void RecordingManager::writeMetadata(const std::string &dir, uint64_t totalFrames,
-				     uint64_t durationMs)
+void RecordingManager::writeMetadata(const std::string &dir, uint64_t totalFrames, uint64_t durationMs)
 {
 	struct obs_video_info ovi = {};
 	obs_get_video_info(&ovi);
