@@ -65,6 +65,18 @@ uv run python estimate_latency.py /path/to/<UUID>/ --dry-run
 uv run python estimate_latency.py /path/to/<UUID>/ --window-size 45 --threshold-sigma 2.5 --max-latency-ms 300
 ```
 
+### `evaluate_alignment.py`
+
+Residual quality report after median-bias calibration.
+Use this to quantify whether a session is good enough for action-conditioned training.
+
+```bash
+cd scripts
+uv run python evaluate_alignment.py /path/to/<UUID>/
+uv run python evaluate_alignment.py /path/to/<UUID>/ --window-size 45 --threshold-sigma 4.0 --max-latency-ms 120
+uv run python evaluate_alignment.py /path/to/<UUID>/ --json-output ./reports/<UUID>.json
+```
+
 ### `apply_offset.py`
 
 Simple frame-shift alignment utility.
@@ -97,11 +109,18 @@ cd scripts
 uv run python estimate_latency.py /path/to/<UUID>/
 ```
 
-3. Generate high-precision aligned frame actions:
+3. Evaluate residual alignment quality:
+
+```bash
+cd scripts
+uv run python evaluate_alignment.py /path/to/<UUID>/
+```
+
+4. Generate high-precision aligned frame actions:
 
 ```bash
 cd scripts
 uv run python resample_events.py /path/to/<UUID>/
 ```
 
-4. Use `actions_resampled.jsonl` for downstream training ingestion.
+5. Use `actions_resampled.jsonl` for downstream training ingestion.
