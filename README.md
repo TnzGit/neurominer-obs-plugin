@@ -1,59 +1,158 @@
-# OBS Plugin Template
+# NeuroMiner OBS Plugin
 
-## Introduction
+NeuroMiner OBS Plugin is an OS-level input capture plugin for OBS Studio, designed for
+world-model game data collection. It records global keyboard/mouse input and aligns it
+with OBS video frames, producing synchronized multimodal training data.
 
-The plugin template is meant to be used as a starting point for OBS Studio plugin development. It includes:
+## What It Records
 
-* Boilerplate plugin source code
-* A CMake project file
-* GitHub Actions workflows and repository actions
+For each OBS recording session, the plugin creates a UUID folder and writes:
 
-## Supported Build Environments
+- `recording.<ext>`: the original recorded video moved into the session folder
+- `actions.jsonl`: per-frame input snapshots synchronized to OBS frame timing
+- `events.jsonl`: raw sub-frame input events with microsecond session offsets
+- `metadata.json`: session metadata (game name, platform, fps, duration, bias)
 
-| Platform  | Tool   |
-|-----------|--------|
-| Windows   | Visual Studio 17 2022 |
-| macOS     | XCode 16.0 |
-| Windows, macOS  | CMake 3.30.5 |
-| Ubuntu 24.04 | CMake 3.28.3 |
-| Ubuntu 24.04 | `ninja-build` |
-| Ubuntu 24.04 | `pkg-config`
-| Ubuntu 24.04 | `build-essential` |
+The plugin starts/stops data collection automatically with OBS recording start/stop
+events.
 
-## Quick Start
+## Core Use Case
 
-An absolute bare-bones [Quick Start Guide](https://github.com/obsproject/obs-plugintemplate/wiki/Quick-Start-Guide) is available in the wiki.
+This project targets game interaction dataset generation for world-model and behavior
+model training. The data format is built to support:
 
-## Documentation
+- frame-level action conditioning (`actions.jsonl`)
+- sub-frame event reconstruction (`events.jsonl`)
+- latency compensation and resampling in post-processing scripts
 
-All documentation can be found in the [Plugin Template Wiki](https://github.com/obsproject/obs-plugintemplate/wiki).
+## Platform Support
 
-Suggested reading to get up and running:
+| Platform | Status |
+| --- | --- |
+| macOS | Supported |
+| Windows x64 | Supported |
+| Linux | Future |
 
-* [Getting started](https://github.com/obsproject/obs-plugintemplate/wiki/Getting-Started)
-* [Build system requirements](https://github.com/obsproject/obs-plugintemplate/wiki/Build-System-Requirements)
-* [Build system options](https://github.com/obsproject/obs-plugintemplate/wiki/CMake-Build-System-Options)
+## Install
 
-## GitHub Actions & CI
+### macOS
 
-Default GitHub Actions workflows are available for the following repository actions:
+Download the `macos-universal` artifact, extract it, then run the `.pkg` installer.
 
-* `push`: Run for commits or tags pushed to `master` or `main` branches.
-* `pr-pull`: Run when a Pull Request has been pushed or synchronized.
-* `dispatch`: Run when triggered by the workflow dispatch in GitHub's user interface.
-* `build-project`: Builds the actual project and is triggered by other workflows.
-* `check-format`: Checks CMake and plugin source code formatting and is triggered by other workflows.
+### Windows
 
-The workflows make use of GitHub repository actions (contained in `.github/actions`) and build scripts (contained in `.github/scripts`) which are not needed for local development, but might need to be adjusted if additional/different steps are required to build the plugin.
+Download the `windows-x64` artifact, extract it, then run the generated
+`*-windows-x64-setup.exe` installer. The installer auto-detects OBS installation
+paths and pre-fills the OBS plugin directory (`...\obs-studio\obs-plugins`).
 
-### Retrieving build artifacts
+## Usage
 
-Successful builds on GitHub Actions will produce build artifacts that can be downloaded for testing. These artifacts are commonly simple archives and will not contain package installers or installation programs.
+1. Open OBS and find the `NeuroMiner Input Recorder` dock.
+2. Set a game name (used in `metadata.json`).
+3. Keep `Enable Input Capture` enabled.
+4. Start OBS recording.
+5. Interact with the game normally.
+6. Stop OBS recording.
+7. Locate the generated UUID session folder next to your recording output.
 
-### Building a Release
+## Build From Source
 
-To create a release, an appropriately named tag needs to be pushed to the `main`/`master` branch using semantic versioning (e.g., `12.3.4`, `23.4.5-beta2`). A draft release will be created on the associated repository with generated installer packages or installation programs attached as release artifacts.
+### macOS
 
-## Signing and Notarizing on macOS
+```bash
+cmake --preset macos
+cmake --build --preset macos
+```
 
-Basic concepts of codesigning and notarization on macOS are explained in the correspodning [Wiki article](https://github.com/obsproject/obs-plugintemplate/wiki/Codesigning-On-macOS) which has a specific section for the [GitHub Actions setup](https://github.com/obsproject/obs-plugintemplate/wiki/Codesigning-On-macOS#setting-up-code-signing-for-github-actions).
+### Windows (on Windows host)
+
+```powershell
+cmake --preset windows-x64
+cmake --build --preset windows-x64 --config RelWithDebInfo --parallel
+```
+
+## Data Processing Scripts
+
+Quick processing commands:
+
+```bash
+cd scripts
+uv run python estimate_latency.py /path/to/<UUID>/
+uv run python resample_events.py /path/to/<UUID>/
+```
+
+For full options and detailed script behavior, see `scripts/README.md`.
+
+## Data Format
+
+Each recording session is written to one UUID directory.
+
+### `recording.<ext>`
+
+- OBS output video file moved into the session directory.
+- Extension depends on your OBS recording format (for example, `.mp4`).
+
+### `metadata.json`
+
+- `stream_name` (`string`): session UUID.
+- `game_name` (`string`): value set in the plugin dock.
+- `recorder_version` (`string`): plugin version.
+- `platform` (`"mac" | "windows" | "linux"`): runtime platform tag.
+- `video_meta` (`object`):
+  - `width` (`int`)
+  - `height` (`int`)
+  - `fps` (`number`)
+  - `total_frames` (`int`)
+  - `duration_ms` (`int`)
+- `session_start_timestamp_ms` (`int`): Unix timestamp in milliseconds.
+- `input_latency_bias_ms` (`number`): bias used for post-processing alignment.
+
+### `actions.jsonl`
+
+One JSON object per video frame. Each line contains:
+
+- `frame` (`int`): frame index.
+- `timestamp_ms` (`int`): wall-clock timestamp when frame snapshot was recorded.
+- `frame_pts_ms` (`number`): deterministic frame PTS (`frame * 1000 / fps`).
+- `capture_ns` (`int`): OBS compositor timestamp in nanoseconds.
+- `key` (`string[]`): currently pressed keys at this frame.
+- `mouse` (`object`):
+  - `dx`, `dy` (`int`): accumulated mouse movement since previous frame.
+  - `x`, `y` (`int`): latest absolute mouse position.
+  - `scroll_dy` (`int`): accumulated scroll delta since previous frame.
+  - `button` (`string[]`): currently pressed mouse buttons.
+
+### `events.jsonl`
+
+Raw sub-frame input event stream. Each line includes:
+
+- `type` (`string`): one of:
+  - `key_down`, `key_up`
+  - `mouse_move`
+  - `mouse_button_down`, `mouse_button_up`
+  - `scroll`
+  - (`flags_changed` on macOS)
+- `timestamp_ms` (`int`): wall-clock event timestamp.
+- `session_offset_us` (`int`): microseconds from session start.
+- Optional fields by event type:
+  - `key` (`string`) for keyboard events
+  - `button` (`string`) for mouse button events
+  - `dx`, `dy`, `x`, `y` for mouse movement
+  - `scroll_dy` for scroll events
+
+### `actions_resampled.jsonl` (generated by scripts)
+
+- Produced by `scripts/resample_events.py`.
+- Reconstructed high-precision per-frame actions derived from `events.jsonl` and
+  `input_latency_bias_ms`.
+- Recommended output for training ingestion after latency compensation.
+
+## Privacy and Safety Notes
+
+- Input capture is global while a recording session is active.
+- Do not record sensitive input (passwords, private chats, credentials).
+- Use test accounts and controlled environments for dataset collection.
+
+## License
+
+Licensed under `GPL-2.0-or-later`. See `LICENSE`.

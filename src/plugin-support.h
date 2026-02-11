@@ -1,6 +1,6 @@
 /*
-Plugin Name
-Copyright (C) <Year> <Developer> <Email Address>
+NeuroMiner OBS Plugin
+Copyright (C) 2026 NeuroMiner <info@neurominer.ai>
 
 This program is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
