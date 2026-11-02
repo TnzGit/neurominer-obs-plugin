@@ -68,12 +68,8 @@ elseif(WIN32)
   target_sources(${CMAKE_PROJECT_NAME} PRIVATE src/input-capturer-win.h src/input-capturer-win.cpp)
   target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE user32)
 
-  # FFmpeg's installed demuxer is the authority for video packet PTS.
-  # OBS ships these DLLs; use the same OBS SDK dependency tree as the plugin.
-  string(JSON _obs_source_version GET ${buildspec} dependencies obs-studio version)
-  list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/.deps/obs-studio-${_obs_source_version}/cmake/finders")
-  find_package(FFmpeg REQUIRED COMPONENTS avformat avcodec avutil)
-  target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE FFmpeg::avformat FFmpeg::avcodec FFmpeg::avutil)
+  # OS-native MP4 reader avoids OBS 31/32 FFmpeg DLL ABI mismatches.
+  target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE mfreadwrite mfplat mfuuid ole32)
 elseif(UNIX)
   message(STATUS "Linux build temporarily disabled for this plugin.")
 endif()

@@ -35,10 +35,11 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <limits>
 
 #ifdef _WIN32
-extern "C" {
-#include <libavformat/avformat.h>
-#include <libavutil/avutil.h>
-}
+#include <windows.h>
+#include <mfapi.h>
+#include <mfreadwrite.h>
+#include <mferror.h>
+#include <objbase.h>
 #include <direct.h>
 #define mkdir_p(path) _mkdir(path)
 #else
@@ -472,61 +473,88 @@ void RecordingManager::writeActions(const std::string &dir)
 
 
 // ---------------------------------------------------------------------------
-// Read the actual muxed video packet timestamps from the finished recording.
-// Encoder packet callbacks run before the output muxer, so their count is
-// diagnostic only and may include a packet discarded during finalization.
+// Read the actual finalized MP4 video samples using Windows Media Foundation.
+// This reads timestamps from the file (not the OBS pre-muxer packet callback).
+// It avoids linking an FFmpeg-61 DLL into OBS 32, which ships FFmpeg-62.
+// For unsupported containers we produce only an explicitly unverified log.
 // ---------------------------------------------------------------------------
 static bool readMuxedVideoPts(const std::string &file, std::vector<double> &ptsMs)
 {
 #ifdef _WIN32
-	AVFormatContext *context = nullptr;
-	if (avformat_open_input(&context, file.c_str(), nullptr, nullptr) < 0) {
-		obs_log(LOG_ERROR, "Cannot open finalized video for PTS reconciliation: %s", file.c_str());
+	const int chars = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, file.c_str(), -1, nullptr, 0);
+	if (chars <= 0) {
+		obs_log(LOG_ERROR, "Cannot convert recording path to Unicode");
 		return false;
 	}
-	if (avformat_find_stream_info(context, nullptr) < 0) {
-		obs_log(LOG_WARNING, "Could not read recording stream information");
-		avformat_close_input(&context);
+	std::wstring fileWide(static_cast<size_t>(chars), L'\0');
+	if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, file.c_str(), -1, fileWide.data(), chars) <= 0)
+		return false;
+
+	const HRESULT comResult = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+	const bool releaseCom = SUCCEEDED(comResult);
+	if (FAILED(comResult) && comResult != RPC_E_CHANGED_MODE) {
+		obs_log(LOG_ERROR, "COM init failed for recording PTS scan: 0x%08lx", (unsigned long)comResult);
 		return false;
 	}
-	int stream = av_find_best_stream(context, AVMEDIA_TYPE_VIDEO, -1, -1, nullptr, 0);
-	if (stream < 0) {
-		obs_log(LOG_WARNING, "No video stream in finalized recording");
-		avformat_close_input(&context);
+	HRESULT hr = MFStartup(MF_VERSION, MFSTARTUP_LITE);
+	if (FAILED(hr)) {
+		obs_log(LOG_ERROR, "Media Foundation start failed: 0x%08lx", (unsigned long)hr);
+		if (releaseCom)
+			CoUninitialize();
 		return false;
 	}
-	const AVRational tb = context->streams[stream]->time_base;
-	AVPacket *packet = av_packet_alloc();
-	if (!packet) {
-		avformat_close_input(&context);
+	IMFSourceReader *reader = nullptr;
+	hr = MFCreateSourceReaderFromURL(fileWide.c_str(), nullptr, &reader);
+	if (FAILED(hr)) {
+		obs_log(LOG_ERROR, "Cannot open finalized MP4 with Media Foundation: 0x%08lx",
+			(unsigned long)hr);
+		MFShutdown();
+		if (releaseCom)
+			CoUninitialize();
 		return false;
 	}
 
 	bool valid = true;
-	int result = 0;
-	while ((result = av_read_frame(context, packet)) >= 0) {
-		if (packet->stream_index == stream) {
-			if (packet->pts == AV_NOPTS_VALUE) {
-				valid = false;
-			} else {
-				ptsMs.push_back(static_cast<double>(packet->pts) * av_q2d(tb) * 1000.0);
-			}
+	for (;;) {
+		DWORD actualStream = 0;
+		DWORD flags = 0;
+		LONGLONG timestamp = 0;
+		IMFSample *sample = nullptr;
+		hr = reader->ReadSample(MF_SOURCE_READER_FIRST_VIDEO_STREAM, 0, &actualStream,
+					&flags, &timestamp, &sample);
+		if (FAILED(hr)) {
+			obs_log(LOG_ERROR, "MP4 timestamp scan failed: 0x%08lx", (unsigned long)hr);
+			valid = false;
+			if (sample)
+				sample->Release();
+			break;
 		}
-		av_packet_unref(packet);
-		if (!valid)
+		if (sample) {
+			LONGLONG sampleTime = timestamp;
+			if (SUCCEEDED(sample->GetSampleTime(&sampleTime))) {
+				// Media Foundation timestamps are in units of 100ns.
+				ptsMs.push_back(static_cast<double>(sampleTime) / 10000.0);
+			} else {
+				ptsMs.push_back(static_cast<double>(timestamp) / 10000.0);
+			}
+			sample->Release();
+		}
+		if (flags & MF_SOURCE_READERF_ENDOFSTREAM)
 			break;
 	}
-	av_packet_free(&packet);
-	avformat_close_input(&context);
-	if (!valid || (result < 0 && result != AVERROR_EOF) || ptsMs.empty()) {
-		obs_log(LOG_ERROR, "Incomplete/unreadable video PTS; refusing to claim frame-exact alignment");
+	reader->Release();
+	MFShutdown();
+	if (releaseCom)
+		CoUninitialize();
+
+	if (!valid || ptsMs.empty()) {
 		ptsMs.clear();
 		return false;
 	}
 	std::stable_sort(ptsMs.begin(), ptsMs.end());
-	const double zero = ptsMs.front();
-	for (auto &v : ptsMs)
-		v -= zero;
+	const double first = ptsMs.front();
+	for (auto &t : ptsMs)
+		t -= first;
 	return true;
 #else
 	(void)file;
