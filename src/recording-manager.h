@@ -84,11 +84,13 @@ private:
 	static std::string generateUUID();
 
 	// Write metadata.json to the given directory
-	void writeMetadata(const std::string &dir, uint64_t totalFrames, uint64_t durationMs);
+	void writeMetadata(const std::string &dir, uint64_t totalFrames, uint64_t durationMs,
+			   uint64_t fileVideoFrames, bool filePtsVerified);
 
 	// Write actions.jsonl to the given directory
 	void writeActions(const std::string &dir);
-	void writeEncodedActions(const std::string &dir);
+	bool writeEncodedActions(const std::string &dir, const std::string &recordingFile,
+				 uint64_t &fileVideoFrames);
 
 	// Write events.jsonl (raw sub-frame input events) to the given directory
 	void writeEvents(const std::string &dir);

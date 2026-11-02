@@ -31,8 +31,14 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <sstream>
 #include <iomanip>
 #include <iterator>
+#include <cmath>
+#include <limits>
 
 #ifdef _WIN32
+extern "C" {
+#include <libavformat/avformat.h>
+#include <libavutil/avutil.h>
+}
 #include <direct.h>
 #define mkdir_p(path) _mkdir(path)
 #else
@@ -289,18 +295,22 @@ void RecordingManager::stopSession()
 		}
 	}
 	std::string destRecording = sessionDir + "/recording" + ext;
+	bool movedRecording = false;
 	if (std::rename(recordingPath.c_str(), destRecording.c_str()) != 0) {
 		obs_log(LOG_ERROR, "Failed to move recording from '%s' to '%s'", recordingPath.c_str(),
 			destRecording.c_str());
 	} else {
 		obs_log(LOG_INFO, "Moved recording to: %s", destRecording.c_str());
+		movedRecording = true;
 	}
 
 	// Write all output files
 	writeActions(sessionDir);
-	writeEncodedActions(sessionDir);
+	uint64_t muxedFrameCount = 0;
+	const bool muxPtsVerified = writeEncodedActions(sessionDir, movedRecording ? destRecording : recordingPath,
+							muxedFrameCount);
 	writeEvents(sessionDir);
-	writeMetadata(sessionDir, totalFrames, durationMs);
+	writeMetadata(sessionDir, totalFrames, durationMs, muxedFrameCount, muxPtsVerified);
 
 	obs_log(LOG_INFO, "Session files written to: %s", sessionDir.c_str());
 }
@@ -392,7 +402,8 @@ std::string RecordingManager::generateUUID()
 // ---------------------------------------------------------------------------
 // Write metadata.json
 // ---------------------------------------------------------------------------
-void RecordingManager::writeMetadata(const std::string &dir, uint64_t totalFrames, uint64_t durationMs)
+void RecordingManager::writeMetadata(const std::string &dir, uint64_t totalFrames, uint64_t durationMs,
+				    uint64_t fileVideoFrames, bool filePtsVerified)
 {
 	struct obs_video_info ovi = {};
 	obs_get_video_info(&ovi);
@@ -420,6 +431,8 @@ void RecordingManager::writeMetadata(const std::string &dir, uint64_t totalFrame
 	ss << "    \"fps\": " << std::fixed << std::setprecision(1) << fps << ",\n";
 	ss << "    \"total_frames\": " << totalFrames << ",\n";
 	ss << "    \"encoded_video_packets\": " << encodedPackets_.size() << ",\n";
+	ss << "    \"file_video_frames\": " << fileVideoFrames << ",\n";
+	ss << "    \"file_video_pts_verified\": " << (filePtsVerified ? "true" : "false") << ",\n";
 	ss << "    \"duration_ms\": " << durationMs << "\n";
 	ss << "  },\n";
 	ss << "  \"session_start_timestamp_ms\": " << sessionStartWallMs_ << ",\n";
@@ -457,6 +470,71 @@ void RecordingManager::writeActions(const std::string &dir)
 	obs_log(LOG_INFO, "Wrote actions.jsonl (%zu entries)", actions_.size());
 }
 
+
+// ---------------------------------------------------------------------------
+// Read the actual muxed video packet timestamps from the finished recording.
+// Encoder packet callbacks run before the output muxer, so their count is
+// diagnostic only and may include a packet discarded during finalization.
+// ---------------------------------------------------------------------------
+static bool readMuxedVideoPts(const std::string &file, std::vector<double> &ptsMs)
+{
+#ifdef _WIN32
+	AVFormatContext *context = nullptr;
+	if (avformat_open_input(&context, file.c_str(), nullptr, nullptr) < 0) {
+		obs_log(LOG_ERROR, "Cannot open finalized video for PTS reconciliation: %s", file.c_str());
+		return false;
+	}
+	if (avformat_find_stream_info(context, nullptr) < 0) {
+		obs_log(LOG_WARNING, "Could not read recording stream information");
+		avformat_close_input(&context);
+		return false;
+	}
+	int stream = av_find_best_stream(context, AVMEDIA_TYPE_VIDEO, -1, -1, nullptr, 0);
+	if (stream < 0) {
+		obs_log(LOG_WARNING, "No video stream in finalized recording");
+		avformat_close_input(&context);
+		return false;
+	}
+	const AVRational tb = context->streams[stream]->time_base;
+	AVPacket *packet = av_packet_alloc();
+	if (!packet) {
+		avformat_close_input(&context);
+		return false;
+	}
+
+	bool valid = true;
+	int result = 0;
+	while ((result = av_read_frame(context, packet)) >= 0) {
+		if (packet->stream_index == stream) {
+			if (packet->pts == AV_NOPTS_VALUE) {
+				valid = false;
+			} else {
+				ptsMs.push_back(static_cast<double>(packet->pts) * av_q2d(tb) * 1000.0);
+			}
+		}
+		av_packet_unref(packet);
+		if (!valid)
+			break;
+	}
+	av_packet_free(&packet);
+	avformat_close_input(&context);
+	if (!valid || (result < 0 && result != AVERROR_EOF) || ptsMs.empty()) {
+		obs_log(LOG_ERROR, "Incomplete/unreadable video PTS; refusing to claim frame-exact alignment");
+		ptsMs.clear();
+		return false;
+	}
+	std::stable_sort(ptsMs.begin(), ptsMs.end());
+	const double zero = ptsMs.front();
+	for (auto &v : ptsMs)
+		v -= zero;
+	return true;
+#else
+	(void)file;
+	(void)ptsMs;
+	return false;
+#endif
+}
+
 // ---------------------------------------------------------------------------
 // Write encoded_actions.jsonl: one action per OBS encoded video packet.
 // These rows are indexed by encoded presentation order, not compositor order.
@@ -464,73 +542,96 @@ void RecordingManager::writeActions(const std::string &dir)
 // monotonic clock with onRawVideo's video_data->timestamp.
 // If cts is not available, fall back to relative PTS (estimated alignment).
 // ---------------------------------------------------------------------------
-void RecordingManager::writeEncodedActions(const std::string &dir)
+bool RecordingManager::writeEncodedActions(const std::string &dir, const std::string &recordingFile,
+					  uint64_t &fileVideoFrames)
 {
-	if (encodedPackets_.empty() || actions_.empty()) {
-		obs_log(LOG_WARNING, "No encoded video packets or compositor frames; cannot write encoded_actions.jsonl");
-		return;
-	}
+	fileVideoFrames = 0;
+	std::vector<double> muxPtsMs;
+	const bool muxVerified = readMuxedVideoPts(recordingFile, muxPtsMs);
+	fileVideoFrames = static_cast<uint64_t>(muxPtsMs.size());
 
+	if (encodedPackets_.empty() || actions_.empty()) {
+		obs_log(LOG_WARNING, "No encoder packets/compositor actions; cannot align video to input");
+		return false;
+	}
 	std::vector<EncodedVideoPacket> packets = encodedPackets_;
 	std::stable_sort(packets.begin(), packets.end(),
 			 [](const EncodedVideoPacket &a, const EncodedVideoPacket &b) { return a.pts < b.pts; });
-
 	const int64_t firstPts = packets.front().pts;
-	std::string path = dir + "/encoded_actions.jsonl";
+	std::vector<double> packetPtsMs;
+	packetPtsMs.reserve(packets.size());
+	for (const auto &p : packets) {
+		const double timebase = p.timebase_den > 0 ? static_cast<double>(p.timebase_num) / p.timebase_den
+							   : 1.0 / fps_;
+		packetPtsMs.push_back(static_cast<double>(p.pts - firstPts) * timebase * 1000.0);
+	}
+	// If mux parsing failed, preserve diagnostics under a clearly unverified
+	// name; do not create an allegedly frame-exact encoded_actions.jsonl.
+	const std::string path = dir +
+		(muxVerified ? "/encoded_actions.jsonl" : "/encoded_actions_unverified.jsonl");
 	std::ofstream ofs(path);
 	if (!ofs.is_open()) {
-		obs_log(LOG_ERROR, "Failed to write encoded_actions.jsonl: %s", path.c_str());
-		return;
+		obs_log(LOG_ERROR, "Failed to write action alignment: %s", path.c_str());
+		return false;
 	}
 
-	size_t estimatedCount = 0;
+	const size_t rowCount = muxVerified ? muxPtsMs.size() : packets.size();
+	size_t unmatched = 0;
 	double worstGapMs = 0.0;
-	for (size_t i = 0; i < packets.size(); ++i) {
-		const auto &p = packets[i];
-		const double timebase = (p.timebase_den > 0)
-						? static_cast<double>(p.timebase_num) / p.timebase_den
-						: 1.0 / fps_;
-		const double relativeMs = static_cast<double>(p.pts - firstPts) * timebase * 1000.0;
-		const bool exactClock = p.cts_ns != 0;
-		if (!exactClock)
-			++estimatedCount;
-
-		const uint64_t targetNs = exactClock
-			? p.cts_ns
-			: actions_.front().capture_ns +
-			  static_cast<uint64_t>(std::max(0.0, relativeMs) * 1000000.0);
-
+	for (size_t i = 0; i < rowCount; ++i) {
+		// The actual file PTS defines the output rows and video frame numbers.
+		const double videoPtsMs = muxVerified ? muxPtsMs[i] : packetPtsMs[i];
+		auto pos = std::lower_bound(packetPtsMs.begin(), packetPtsMs.end(), videoPtsMs);
+		size_t k = pos == packetPtsMs.end() ? packetPtsMs.size() - 1
+						 : static_cast<size_t>(pos - packetPtsMs.begin());
+		if (k > 0 && std::abs(packetPtsMs[k - 1] - videoPtsMs) <=
+				       std::abs(packetPtsMs[k] - videoPtsMs))
+			--k;
+		const auto &packet = packets[k];
+		const double packetDeltaMs = std::abs(packetPtsMs[k] - videoPtsMs);
+		// Most MP4 tracks align exactly. Matroska may round to 1ms ticks.
+		const bool reliablePacket = packetDeltaMs <= 1.5;
+		if (!reliablePacket)
+			++unmatched;
+		const bool haveCts = packet.cts_ns != 0 && reliablePacket;
+		const uint64_t targetNs = haveCts ? packet.cts_ns :
+			actions_.front().capture_ns +
+			static_cast<uint64_t>(std::max(0.0, videoPtsMs) * 1000000.0);
 		auto it = std::lower_bound(actions_.begin(), actions_.end(), targetNs,
 					   [](const FrameAction &a, uint64_t ns) { return a.capture_ns < ns; });
 		auto gap = [targetNs](const FrameAction &a) {
-			return a.capture_ns > targetNs
-				? static_cast<double>(a.capture_ns - targetNs)
-				: static_cast<double>(targetNs - a.capture_ns);
+			return a.capture_ns > targetNs ? static_cast<double>(a.capture_ns - targetNs)
+						       : static_cast<double>(targetNs - a.capture_ns);
 		};
-		if (it == actions_.end()) {
+		if (it == actions_.end())
 			it = std::prev(actions_.end());
-		} else if (it != actions_.begin() && gap(*std::prev(it)) <= gap(*it)) {
+		else if (it != actions_.begin() && gap(*std::prev(it)) <= gap(*it))
 			--it;
-		}
-		const uint64_t sourceFrame = it->frame;
-		const double deltaMs = gap(*it) / 1000000.0;
-		worstGapMs = std::max(worstGapMs, deltaMs);
-
+		const size_t sourceFrame = it->frame;
+		const double gapMs = gap(*it) / 1000000.0;
+		worstGapMs = std::max(worstGapMs, gapMs);
 		FrameAction action = *it;
-		action.frame = i; // encoded / playable video frame index
-		action.frame_pts_ms = relativeMs;
+		action.frame = i;
+		action.frame_pts_ms = videoPtsMs;
 		const std::string json = frameActionToJson(action);
 		ofs << "{\"source_frame\":" << sourceFrame;
-		ofs << ",\"video_pts_ms\":" << std::fixed << std::setprecision(3) << relativeMs;
-		ofs << ",\"alignment_method\":\"" << (exactClock ? "cts_nearest" : "pts_estimate") << "\"";
-		ofs << ",\"alignment_error_ms\":" << std::fixed << std::setprecision(3) << deltaMs;
+		ofs << ",\"video_pts_ms\":" << std::fixed << std::setprecision(3) << videoPtsMs;
+		ofs << ",\"alignment_method\":\"" <<
+			(muxVerified ? (haveCts ? "mux_pts_cts_nearest" : "mux_pts_estimate") :
+				       "encoder_packet_unverified") << "\"";
+		ofs << ",\"packet_pts_delta_ms\":" << std::fixed << std::setprecision(3) << packetDeltaMs;
+		ofs << ",\"alignment_error_ms\":" << std::fixed << std::setprecision(3) << gapMs;
 		ofs << "," << json.substr(1) << "\n";
 	}
 	ofs.close();
-	obs_log(LOG_INFO, "Wrote encoded_actions.jsonl (%zu video packets; %zu estimated clock; max gap %.3fms)",
-		packets.size(), estimatedCount, worstGapMs);
-	if (worstGapMs > 100.0)
-		obs_log(LOG_WARNING, "Large video/action timestamp mismatch (%.3f ms); inspect source mapping.", worstGapMs);
+	obs_log(LOG_INFO,
+		"Video/input alignment: mux verified=%s, file frames=%llu, encoder packets=%zu, "
+		"unmatched packet PTS=%zu, largest action delta=%.3f ms",
+		muxVerified ? "yes" : "no", (unsigned long long)fileVideoFrames, packets.size(),
+		unmatched, worstGapMs);
+	if (unmatched > 0)
+		obs_log(LOG_WARNING, "Some file PTS lacked matching encoder PTS: %zu", unmatched);
+	return muxVerified;
 }
 
 // ---------------------------------------------------------------------------
