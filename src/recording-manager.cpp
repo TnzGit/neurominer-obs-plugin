@@ -20,8 +20,10 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #include <obs.h>
 #include <obs-frontend-api.h>
+#include <obs-encoder.h>
 #include <plugin-support.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <fstream>
@@ -104,6 +106,11 @@ RecordingManager::~RecordingManager()
 		if (capturer_)
 			capturer_->stop();
 	}
+	if (recordingOutput_) {
+		obs_output_remove_packet_callback(recordingOutput_, RecordingManager::onEncodedPacket, this);
+		obs_output_release(recordingOutput_);
+		recordingOutput_ = nullptr;
+	}
 }
 
 void RecordingManager::setGameName(const std::string &name)
@@ -160,6 +167,7 @@ void RecordingManager::startSession()
 	sessionStartWallMs_ = startTimestampMs_;
 	frameCounter_ = 0;
 	actions_.clear();
+	encodedPackets_.clear();
 	actions_.reserve(60 * 60 * 10); // pre-allocate for ~10 minutes at 60fps
 	events_.clear();
 	events_.reserve(60 * 60 * 100); // generous pre-allocation for raw events
@@ -188,6 +196,15 @@ void RecordingManager::startSession()
 	// Passing NULL for conversion uses the default output format.
 	obs_add_raw_video_callback(NULL, RecordingManager::onRawVideo, this);
 
+	// Video packet callbacks count the frames that actually reach the recording
+	// encoder path (rather than all OBS compositor frames). OBS returns a new
+	// reference here; release it when stopping the session.
+	recordingOutput_ = obs_frontend_get_recording_output();
+	if (recordingOutput_)
+		obs_output_add_packet_callback(recordingOutput_, RecordingManager::onEncodedPacket, this);
+	else
+		obs_log(LOG_WARNING, "Recording output unavailable; encoded frame alignment disabled.");
+
 	sessionActive_ = true;
 	obs_log(LOG_INFO, "Recording session started: %s (fps=%.1f)", sessionUUID_.c_str(), fps_);
 }
@@ -215,18 +232,23 @@ void RecordingManager::stopSession()
 		startMs = startTimestampMs_;
 	}
 
-	// Remove raw video callback first
+	// Stop callbacks before reading the accumulated event and packet arrays.
 	obs_remove_raw_video_callback(RecordingManager::onRawVideo, this);
+	if (recordingOutput_) {
+		obs_output_remove_packet_callback(recordingOutput_, RecordingManager::onEncodedPacket, this);
+		obs_output_release(recordingOutput_);
+		recordingOutput_ = nullptr;
+	}
 
-	// Final drain of remaining events before stopping the capturer
+	// Stop polling/hooks first so all pending transitions are drained.
 	if (capturer_) {
+		capturer_->stop();
 		auto remaining = capturer_->drainEvents();
 		{
 			std::lock_guard<std::mutex> lock(mutex_);
 			events_.insert(events_.end(), std::make_move_iterator(remaining.begin()),
 				       std::make_move_iterator(remaining.end()));
 		}
-		capturer_->stop();
 	}
 
 	uint64_t durationMs = endMs - startMs;
@@ -275,6 +297,7 @@ void RecordingManager::stopSession()
 
 	// Write all output files
 	writeActions(sessionDir);
+	writeEncodedActions(sessionDir);
 	writeEvents(sessionDir);
 	writeMetadata(sessionDir, totalFrames, durationMs);
 
@@ -321,6 +344,25 @@ void RecordingManager::onRawVideo(void *param, struct video_data *frame)
 	self->actions_.push_back(std::move(fa));
 
 	self->frameCounter_++;
+}
+
+// Observes the packet stream of the recording output. The packet callback may
+// run on an encoder thread; perform only brief data copying under the lock.
+void RecordingManager::onEncodedPacket(obs_output * /*output*/, struct encoder_packet *packet,
+					struct encoder_packet_time *packetTime, void *param)
+{
+	if (!packet || packet->type != OBS_ENCODER_VIDEO)
+		return;
+	auto *self = static_cast<RecordingManager *>(param);
+	EncodedVideoPacket item;
+	item.pts = packet->pts;
+	item.timebase_num = packet->timebase_num;
+	item.timebase_den = packet->timebase_den;
+	item.cts_ns = packetTime ? packetTime->cts : 0;
+
+	std::lock_guard<std::mutex> lock(self->mutex_);
+	if (self->sessionActive_)
+		self->encodedPackets_.push_back(item);
 }
 
 // ---------------------------------------------------------------------------
@@ -376,6 +418,7 @@ void RecordingManager::writeMetadata(const std::string &dir, uint64_t totalFrame
 	ss << "    \"height\": " << ovi.base_height << ",\n";
 	ss << "    \"fps\": " << std::fixed << std::setprecision(1) << fps << ",\n";
 	ss << "    \"total_frames\": " << totalFrames << ",\n";
+	ss << "    \"encoded_video_packets\": " << encodedPackets_.size() << ",\n";
 	ss << "    \"duration_ms\": " << durationMs << "\n";
 	ss << "  },\n";
 	ss << "  \"session_start_timestamp_ms\": " << sessionStartWallMs_ << ",\n";
@@ -481,6 +524,10 @@ std::string RecordingManager::inputEventToJson(const InputEvent &ev)
 	std::ostringstream ss;
 	ss << "{\"type\":\"" << jsonEscape(ev.type) << "\"";
 	ss << ",\"timestamp_ms\":" << ev.timestamp_ms;
+	if (ev.type == "key_down" || ev.type == "key_up") {
+		ss << ",\"source\":\"" << jsonEscape(ev.source) << "\"";
+		ss << ",\"injected\":" << (ev.injected ? "true" : "false");
+	}
 	ss << ",\"session_offset_us\":" << ev.session_offset_us;
 
 	if (!ev.key.empty()) {
