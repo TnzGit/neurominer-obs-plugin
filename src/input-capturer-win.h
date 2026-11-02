@@ -65,6 +65,7 @@ private:
 
 	// Hook thread function: installs hooks, runs message pump, cleans up
 	void hookThreadFunc();
+	void pollKeyboardLoop();
 
 	mutable std::mutex mutex_;
 	std::atomic<bool> running_{false};
@@ -75,6 +76,8 @@ private:
 
 	// Hook thread
 	std::thread thread_;
+	std::thread keyboardPollThread_;
+	std::atomic<bool> keyboardPollRunning_{false};
 	std::atomic<DWORD> hookThreadId_{0};
 	std::condition_variable startupCv_;
 	bool startupDone_ = false;
