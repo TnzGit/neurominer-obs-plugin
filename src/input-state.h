@@ -43,6 +43,9 @@ struct InputEvent {
 	// Event type: "key_down", "key_up", "flags_changed",
 	//   "mouse_move", "mouse_button_down", "mouse_button_up", "scroll"
 	std::string type;
+	// "hook" uses Windows keyboard/mouse callbacks; "poll" is a periodic keyboard-state fallback.
+	std::string source = "hook";
+	bool injected = false;
 
 	uint64_t timestamp_ms = 0;     // Unix wall clock (ms) — absolute reference
 	int64_t session_offset_us = 0; // microseconds since session start (steady_clock)
