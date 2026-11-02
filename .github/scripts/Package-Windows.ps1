@@ -282,7 +282,7 @@ end;
 
 function GetObsPluginInstallDir(Param: string): string;
 begin
-  Result := AddBackslash(FindObsInstallRoot()) + 'obs-plugins';
+  Result := ExpandConstant('{commonappdata}\obs-studio\plugins');
 end;
 
 function GetObsExePath(Param: string): string;
