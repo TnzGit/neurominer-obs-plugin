@@ -35,8 +35,12 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <limits>
 
 #ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <windows.h>
 #include <mfapi.h>
+#include <mfidl.h>
 #include <mfreadwrite.h>
 #include <mferror.h>
 #include <objbase.h>
