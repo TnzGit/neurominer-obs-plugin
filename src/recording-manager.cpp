@@ -457,6 +457,81 @@ void RecordingManager::writeActions(const std::string &dir)
 }
 
 // ---------------------------------------------------------------------------
+// Write encoded_actions.jsonl: one action per OBS encoded video packet.
+// These rows are indexed by encoded presentation order, not compositor order.
+// cts_ns is the encoder's composition timestamp, which shares the OBS
+// monotonic clock with onRawVideo's video_data->timestamp.
+// If cts is not available, fall back to relative PTS (estimated alignment).
+// ---------------------------------------------------------------------------
+void RecordingManager::writeEncodedActions(const std::string &dir)
+{
+	if (encodedPackets_.empty() || actions_.empty()) {
+		obs_log(LOG_WARNING, "No encoded video packets or compositor frames; cannot write encoded_actions.jsonl");
+		return;
+	}
+
+	std::vector<EncodedVideoPacket> packets = encodedPackets_;
+	std::stable_sort(packets.begin(), packets.end(),
+			 [](const EncodedVideoPacket &a, const EncodedVideoPacket &b) { return a.pts < b.pts; });
+
+	const int64_t firstPts = packets.front().pts;
+	std::string path = dir + "/encoded_actions.jsonl";
+	std::ofstream ofs(path);
+	if (!ofs.is_open()) {
+		obs_log(LOG_ERROR, "Failed to write encoded_actions.jsonl: %s", path.c_str());
+		return;
+	}
+
+	size_t estimatedCount = 0;
+	double worstGapMs = 0.0;
+	for (size_t i = 0; i < packets.size(); ++i) {
+		const auto &p = packets[i];
+		const double timebase = (p.timebase_den > 0)
+						? static_cast<double>(p.timebase_num) / p.timebase_den
+						: 1.0 / fps_;
+		const double relativeMs = static_cast<double>(p.pts - firstPts) * timebase * 1000.0;
+		const bool exactClock = p.cts_ns != 0;
+		if (!exactClock)
+			++estimatedCount;
+
+		const uint64_t targetNs = exactClock
+			? p.cts_ns
+			: actions_.front().capture_ns +
+			  static_cast<uint64_t>(std::max(0.0, relativeMs) * 1000000.0);
+
+		auto it = std::lower_bound(actions_.begin(), actions_.end(), targetNs,
+					   [](const FrameAction &a, uint64_t ns) { return a.capture_ns < ns; });
+		auto gap = [targetNs](const FrameAction &a) {
+			return a.capture_ns > targetNs
+				? static_cast<double>(a.capture_ns - targetNs)
+				: static_cast<double>(targetNs - a.capture_ns);
+		};
+		if (it == actions_.end()) {
+			it = std::prev(actions_.end());
+		} else if (it != actions_.begin() && gap(*std::prev(it)) <= gap(*it)) {
+			--it;
+		}
+		const uint64_t sourceFrame = it->frame;
+		const double deltaMs = gap(*it) / 1000000.0;
+		worstGapMs = std::max(worstGapMs, deltaMs);
+
+		FrameAction action = *it;
+		action.frame = i; // encoded / playable video frame index
+		const std::string json = frameActionToJson(action);
+		ofs << "{\"source_frame\":" << sourceFrame;
+		ofs << ",\"video_pts_ms\":" << std::fixed << std::setprecision(3) << relativeMs;
+		ofs << ",\"alignment_method\":\"" << (exactClock ? "cts_nearest" : "pts_estimate") << "\"";
+		ofs << ",\"alignment_error_ms\":" << std::fixed << std::setprecision(3) << deltaMs;
+		ofs << "," << json.substr(1) << "\n";
+	}
+	ofs.close();
+	obs_log(LOG_INFO, "Wrote encoded_actions.jsonl (%zu video packets; %zu estimated clock; max gap %.3fms)",
+		packets.size(), estimatedCount, worstGapMs);
+	if (worstGapMs > 100.0)
+		obs_log(LOG_WARNING, "Large video/action timestamp mismatch (%.3f ms); inspect source mapping.", worstGapMs);
+}
+
+// ---------------------------------------------------------------------------
 // Write events.jsonl (raw sub-frame input events)
 // ---------------------------------------------------------------------------
 void RecordingManager::writeEvents(const std::string &dir)
