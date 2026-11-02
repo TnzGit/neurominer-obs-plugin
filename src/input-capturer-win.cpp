@@ -119,15 +119,23 @@ bool InputCapturerWin::start()
 		}
 	}
 
-	obs_log(LOG_INFO, "Windows input capturer started.");
+	// Poll key state independently of the low-level hook. Some foreground games
+	// swallow or suppress WH_KEYBOARD_LL callbacks while GetAsyncKeyState
+	// still exposes the held keys. Run only during an active OBS session.
+	keyboardPollRunning_.store(true);
+	keyboardPollThread_ = std::thread(&InputCapturerWin::pollKeyboardLoop, this);
+	obs_log(LOG_INFO, "Windows input capturer started (hook + 4ms keyboard poll).");
 	return true;
 }
 
 void InputCapturerWin::stop()
 {
-	if (!running_.load() && !thread_.joinable())
+	if (!running_.load() && !thread_.joinable() && !keyboardPollThread_.joinable())
 		return;
 
+	keyboardPollRunning_.store(false);
+	if (keyboardPollThread_.joinable())
+		keyboardPollThread_.join();
 	running_.store(false);
 
 	// Tell the hook thread's message pump to quit
@@ -167,6 +175,54 @@ void InputCapturerWin::stop()
 bool InputCapturerWin::isRunning() const
 {
 	return running_.load();
+}
+
+// ---------------------------------------------------------------------------
+// 4 ms keyboard-state polling fallback. This is intentionally not Raw Input:
+// registering a raw keyboard target from an OBS plugin can displace another
+// plug-in's registration inside the OBS process. Do not synthesize key
+// repeats, and tag polling edges so downstream users know their accuracy.
+// ---------------------------------------------------------------------------
+void InputCapturerWin::pollKeyboardLoop()
+{
+	while (keyboardPollRunning_.load()) {
+		std::set<std::string> currentKeys;
+		for (int vk = VK_BACK; vk <= 0xFE; ++vk) {
+			if (vk == VK_SHIFT || vk == VK_CONTROL || vk == VK_MENU)
+				continue; // left/right virtual keys are handled separately
+			if ((GetAsyncKeyState(vk) & 0x8000) != 0)
+				currentKeys.insert(winVkCodeToName(static_cast<DWORD>(vk), 0, false));
+		}
+		{
+			std::lock_guard<std::mutex> lock(mutex_);
+			if (sessionStartSet_) {
+				for (const auto &key : currentKeys) {
+					if (pressedKeys_.insert(key).second) {
+						InputEvent ev;
+						ev.type = "key_down";
+						ev.key = key;
+						ev.source = "poll";
+						stampEvent(ev);
+						pushEvent(std::move(ev));
+					}
+				}
+				for (auto it = pressedKeys_.begin(); it != pressedKeys_.end();) {
+					if (currentKeys.find(*it) == currentKeys.end()) {
+						InputEvent ev;
+						ev.type = "key_up";
+						ev.key = *it;
+						ev.source = "poll";
+						stampEvent(ev);
+						pushEvent(std::move(ev));
+						it = pressedKeys_.erase(it);
+					} else {
+						++it;
+					}
+				}
+			}
+		}
+		std::this_thread::sleep_for(std::chrono::milliseconds(4));
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -339,11 +395,8 @@ LRESULT CALLBACK InputCapturerWin::mouseProc(int nCode, WPARAM wParam, LPARAM lP
 
 void InputCapturerWin::handleKeyboard(WPARAM wParam, const KBDLLHOOKSTRUCT &kbData)
 {
-	// Ignore synthetic/injected keyboard events to capture physical input only.
-	if ((kbData.flags & LLKHF_INJECTED) != 0 || (kbData.flags & LLKHF_LOWER_IL_INJECTED) != 0) {
-		return;
-	}
-
+	// Preserve injected keys (which may drive the game) but label their origin.
+	const bool injected = (kbData.flags & (LLKHF_INJECTED | LLKHF_LOWER_IL_INJECTED)) != 0;
 	std::lock_guard<std::mutex> lock(mutex_);
 
 	DWORD vk = kbData.vkCode;
@@ -355,22 +408,26 @@ void InputCapturerWin::handleKeyboard(WPARAM wParam, const KBDLLHOOKSTRUCT &kbDa
 	switch (wParam) {
 	case WM_KEYDOWN:
 	case WM_SYSKEYDOWN: {
-		pressedKeys_.insert(keyName);
+		if (!pressedKeys_.insert(keyName).second)
+			break; // hook repeats and poll/hook duplicate downs
 
 		InputEvent ev;
 		ev.type = "key_down";
 		ev.key = keyName;
+		ev.injected = injected;
 		stampEvent(ev);
 		pushEvent(std::move(ev));
 		break;
 	}
 	case WM_KEYUP:
 	case WM_SYSKEYUP: {
-		pressedKeys_.erase(keyName);
+		if (pressedKeys_.erase(keyName) == 0)
+			break; // poll/hook duplicate ups
 
 		InputEvent ev;
 		ev.type = "key_up";
 		ev.key = keyName;
+		ev.injected = injected;
 		stampEvent(ev);
 		pushEvent(std::move(ev));
 		break;
