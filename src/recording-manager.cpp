@@ -30,6 +30,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <random>
 #include <sstream>
 #include <iomanip>
+#include <iterator>
 
 #ifdef _WIN32
 #include <direct.h>
@@ -517,6 +518,7 @@ void RecordingManager::writeEncodedActions(const std::string &dir)
 
 		FrameAction action = *it;
 		action.frame = i; // encoded / playable video frame index
+		action.frame_pts_ms = relativeMs;
 		const std::string json = frameActionToJson(action);
 		ofs << "{\"source_frame\":" << sourceFrame;
 		ofs << ",\"video_pts_ms\":" << std::fixed << std::setprecision(3) << relativeMs;
