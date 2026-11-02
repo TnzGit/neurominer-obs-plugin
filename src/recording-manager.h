@@ -29,6 +29,9 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 // Forward declaration — full definition lives in OBS media-io headers
 struct video_data;
+struct encoder_packet;
+struct encoder_packet_time;
+struct obs_output;
 
 // One frame's worth of recorded action data
 struct FrameAction {
@@ -37,6 +40,13 @@ struct FrameAction {
 	double frame_pts_ms;   // deterministic PTS = frame * 1000.0 / fps
 	uint64_t capture_ns;   // OBS compositor timestamp (ns) from video_data->timestamp
 	InputState state;
+};
+
+struct EncodedVideoPacket {
+	int64_t pts = 0;
+	int32_t timebase_num = 0;
+	int32_t timebase_den = 1;
+	uint64_t cts_ns = 0;
 };
 
 class RecordingManager {
@@ -67,6 +77,8 @@ public:
 private:
 	// OBS raw video callback — called for every composed frame with exact timestamp
 	static void onRawVideo(void *param, struct video_data *frame);
+	static void onEncodedPacket(obs_output *output, struct encoder_packet *packet,
+				    struct encoder_packet_time *packetTime, void *param);
 
 	// Generate a v4 UUID string
 	static std::string generateUUID();
@@ -76,6 +88,7 @@ private:
 
 	// Write actions.jsonl to the given directory
 	void writeActions(const std::string &dir);
+	void writeEncodedActions(const std::string &dir);
 
 	// Write events.jsonl (raw sub-frame input events) to the given directory
 	void writeEvents(const std::string &dir);
@@ -98,6 +111,8 @@ private:
 	uint64_t frameCounter_ = 0;
 	double fps_ = 60.0;
 
+	obs_output *recordingOutput_ = nullptr; // held reference; callback registered during session
+	std::vector<EncodedVideoPacket> encodedPackets_;
 	std::vector<FrameAction> actions_;
 	std::vector<InputEvent> events_; // raw sub-frame event stream
 };
