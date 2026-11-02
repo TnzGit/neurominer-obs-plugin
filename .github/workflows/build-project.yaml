@@ -296,3 +296,10 @@ jobs:
         with:
           name: ${{ steps.setup.outputs.pluginName }}-${{ steps.setup.outputs.pluginVersion }}-windows-x64-${{ needs.check-event.outputs.commitHash }}
           path: ${{ github.workspace }}/release/${{ steps.setup.outputs.pluginName }}-${{ steps.setup.outputs.pluginVersion }}-windows-x64*.*
+
+      - name: Upload standalone Raw Input keyboard probe
+        uses: actions/upload-artifact@v4
+        with:
+          name: neurominer-raw-input-probe-${{ needs.check-event.outputs.commitHash }}
+          path: ${{ github.workspace }}/build_x64/${{ needs.check-event.outputs.config }}/neurominer-raw-input-probe.exe
+          if-no-files-found: error

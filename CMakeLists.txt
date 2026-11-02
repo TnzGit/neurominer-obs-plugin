@@ -72,3 +72,12 @@ elseif(UNIX)
 endif()
 
 set_target_properties_plugin(${CMAKE_PROJECT_NAME} PROPERTIES OUTPUT_NAME ${_name})
+
+# Optional standalone keyboard diagnostic. Does not run inside OBS, does not
+# register a raw keyboard target in OBS, and does not load automatically.
+if(WIN32)
+  add_executable(neurominer-raw-input-probe tools/raw-keyboard-probe.cpp)
+  target_compile_features(neurominer-raw-input-probe PRIVATE cxx_std_17)
+  target_link_libraries(neurominer-raw-input-probe PRIVATE user32)
+endif()
+
